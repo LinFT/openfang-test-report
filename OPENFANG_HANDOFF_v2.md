@@ -1,7 +1,7 @@
 # OpenFang × Google Colab 評估 — Handoff v2
 
 日期：2026-09-03
-狀態：**多供應商 fallback 鏈與記憶層驗證完成；LINE 橋接、本機嵌入待做**
+狀態：**v2.6 已完整跑通（2026-09-02 17:38 UTC）；LINE 橋接、本機嵌入待做**
 對象：接手的人（或下一個 AI session）。讀完本文件即可在 30 分鐘內重建環境並接續。
 承接：v1 handoff（Gemini 單供應商、8 階段）。本版修正 v1 的規則 5、7、9、13、14、16，以及 v1 第 7 節（審計方法）對帳本欄位的解讀；修正處標「v2 修正」。
 
@@ -26,18 +26,18 @@ OpenFang 0.6.9（RightNow-AI，Rust 單一 binary 的 agent OS）在 Colab 免�
 | 項目 | 狀態 |
 |---|---|
 | 環境 | Colab CPU runtime；`curl -fsSL https://openfang.sh/install \| sh` 裝到 `~/.openfang/bin`；版本 **0.6.9** |
-| 模型鏈 | `config.toml`：主力（primary）**Mistral `mistral-small-latest`** → 備援依序 NVIDIA `google/gemma-4-31b-it`（探測通過時）→ Gemini `gemini-3.6-flash` → `gemini-3.5-flash-lite` → `gemma-4-26b-a4b-it` |
+| 模型鏈 | `config.toml`：主力（primary）**Mistral `mistral-small-latest`** → 備援依序 NVIDIA `google/gemma-4-31b-it`（探測通過時）→ Gemini `gemini-3.6-flash` 或 `3.5-flash`（探測時 3.6 逾時就退一級）→ `gemini-3.5-flash-lite` → `gemma-4-26b-a4b-it` |
 | 嵌入 | 自動偵測到 `MISTRAL_API_KEY` → 用 `mistral-embed`，每句兩次、內容出境（`LOCAL_EMBED=False`）。v1 的「退回文字搜尋」實質等於沒有記憶 |
 | 金鑰 | Colab Secrets：`NVIDIA_API_KEY`、`MISTRAL_API_KEY`、`GEMINI_API_KEY`（可省略）、`EXA_API_KEY`（可省略：Cell 10 預設走 Exa 託管端點，匿名免 key） |
-| 在籍 agent | `assistant`（內建，65 個工具）、`mini-line`（2 個記憶工具）、`public-line`（`system_time` 佔位）；測試中會短暫出現 `stranger`、`drill`，跑完自動刪除 |
-| 額度 | 完整跑一輪 v2.3 約 25 次請求，全部落在 Mistral；Gemini 每個模型桶 20 次／日，太平洋午夜（台灣 15:00）重置 |
+| 在籍 agent | `assistant`（內建，65 個工具）、`mini-line`（2 個記憶工具）、`public-line`（`system_time` 佔位）、`search-lite`（Exa MCP＋`system_time`）；測試中會短暫出現 `stranger`、`drill`，跑完自動刪除 |
+| 額度 | 完整跑一輪 v2.6 約 30 次請求（含 1 次 Exa），全部落在 Mistral；Gemini 每個模型桶 20 次／日，太平洋午夜（台灣 15:00）重置 |
 | Colab 限制 | runtime 重置＝安裝、金鑰、設定、記憶全部消失；不適合常駐 |
 
 ## 3. 交付物
 
 | 檔案 | 用途 |
 |---|---|
-| `openfang_colab_v2_6.ipynb` / `.txt` | **定稿**。13 格：安裝 → 探測選模 → 寫鏈 → 啟動 daemon → 基準 → mini-line 三句 → 共用記憶外洩實證與前台對照 → search-lite（Exa MCP，可選）→ 故障演練 → 五層審計 → 總結。`.txt` 是逐格可讀版 |
+| `openfang_colab_v2_6.ipynb` / `.txt` | **定稿，已完整跑通一次**（結果存於 repo 的 `test_Openfang_v2.6.ipynb`）。13 格：安裝 → 探測選模 → 寫鏈 → 啟動 daemon → 基準 → mini-line 三句 → 共用記憶外洩實證與前台對照 → search-lite（Exa MCP，可選）→ 故障演練 → 五層審計 → 總結。`.txt` 是逐格可讀版 |
 | `openfang_colab_v2_5`、`v2_4`、`v2_3`、`v2_2`、`v2_1`、`v2` | 演進版，已被取代；差異見第 5 節標「v2 修正」處 |
 | `OPENFANG_HANDOFF.md`（v1） | Gemini 單供應商時期；規則 5、7、9、13、14、16 已修正 |
 | `openfang_test.py`、精簡版 txt | v1 的 8 階段腳本，仍可跑，但它驗記憶的方法（同一段對話裡問）有漏洞，見規則 21 |
@@ -57,7 +57,7 @@ OpenFang 0.6.9（RightNow-AI，Rust 單一 binary 的 agent OS）在 Colab 免�
 | 7 | assistant 一句 | 200、`切換=0` | 1–2 |
 | 8 | spawn `mini-line` → 越權句（同時告知名字與貓名）→ 同一段對話問名字 → **開空白 session 問貓名** | 婉拒、approvals 無新增、同 session 記得名字（只是上下文）、新 session 記得貓名（記憶層；不能問人名，見規則 26） | 約 6 |
 | 9 | mini-line 存密語 → `stranger` 讀 → `public-line` 三句（貓名） → `blind` 問人名 | stranger 讀到＝kv 跨 agent 可讀；public-line 靠 episodic 記得貓名、讀不到密語；blind 答出小王＝`user_name` 注入 | 約 12 |
-| 10 | （可選，**尚未實測**）用 `mcp-remote` 把 Exa 託管 MCP 端點橋成 stdio 掛進 config（免 key；或 local 模式自起 `exa-mcp-server`，需 key）→ 重啟 → 等 `/api/mcp/servers` 顯示已連線 → spawn `search-lite`（只給 `mcp_exa_web_search_exa` 與 `system_time`）→ 問一句需要上網的問題 | 注入層出現 `mcp_exa_` 工具名、有工具輪、回答附網址 | 1 句加 1 次 Exa |
+| 10 | （可選）用 `mcp-remote` 把 Exa 託管 MCP 端點橋成 stdio 掛進 config（免 key；或 local 模式自起 `exa-mcp-server`，需 key）→ 重啟 → 等 `/api/mcp/servers` 顯示已連線 → spawn `search-lite`（只給 `mcp_exa_web_search_exa` 與 `system_time`）→ 問一句需要上網的問題 | 注入層出現 `mcp_exa_` 工具名、有工具輪、回答附網址。**v2.6 實測 PASS**：hosted 免 key、連線 90 秒內、一句 4 秒答出 v0.6.9 附 GitHub 網址 | 1 句加 1 次 Exa |
 | 11 | 主力改成不存在的模型 → 重啟 → `drill` 一句 → 還原 | 仍回 200、log 有切換紀錄、帳本記的是壞名字 | 2 |
 | 12 | 五層審計（宣告／快照／注入／切換／共用記憶）＋帳本＋episodic 記憶 | 各層一致；`memories.embedding` 的有無與嵌入模式相符 | 0 |
 | 13 | 總表、鏈、規則提醒、可選 teardown | — | 0 |
@@ -96,30 +96,31 @@ OpenFang 0.6.9（RightNow-AI，Rust 單一 binary 的 agent OS）在 Colab 免�
 
 20. （v2 修正 v1 規則 13）**`memory_store`／`memory_recall` 讀寫的是 `kv_store` 表底下一個寫死的共用 id `00000000-…-0001`**，原始碼註解明講「all agents read/write to the same namespace」。manifest 的 `memory_read`／`memory_write` 只影響 WASM agent，對 `builtin:chat` 沒有作用。實證：從沒被告知密語的 `stranger` 用一次 `memory_recall` 就讀到 mini-line 存的「藍莓42」。
 21. **在同一段對話裡問「我叫什麼」只證明上下文，不證明記憶**；session 跨重啟也持久，所以重啟後還記得也不算。v1 所有記憶驗證都是這種。要驗記憶層，必須先 `POST /api/agents/{id}/sessions` 建一段空白 session（會自動切換過去），再問。
-22. episodic 記憶（`memories` 表，本文稱「日記」）的召回有兩種模式。有嵌入：向量比對取最近 5 條。沒嵌入：SQL 是 `content LIKE '%整句使用者訊息%'`，整句必須是某條日記的子字串，中文沒有斷詞，命中率趨近零。**沒有嵌入等於沒有記憶。** v1 那句「nomic-embed 404 無害」是錯的。注意：之前用「名字」做的實測被規則 26 污染（答得出小王可能是注入，答「我還不認識你」是框架指示），v2.6 改用貓的名字重驗，結果待補。
+22. episodic 記憶（`memories` 表，本文稱「日記」）的召回有兩種模式。有嵌入：向量比對取最近 5 條。沒嵌入：SQL 是 `content LIKE '%整句使用者訊息%'`，整句必須是某條日記的子字串，中文沒有斷詞，命中率趨近零。**沒有嵌入等於沒有記憶。** v1 那句「nomic-embed 404 無害」是錯的。之前用「名字」做的實測被規則 26 污染，v2.6 改用貓的名字重驗，**乾淨的實證成立**：`public-line`（無記憶工具、貓名不在 kv）在空白 session 問「我的貓叫什麼名字？」答「阿肥」，`iterations=1`，輸入比空白起點多約 110 tokens——那就是注入的日記。**但同一題 `mini-line` 答錯**：它有記憶工具，先 `memory_recall("user_name")`、再 `memory_recall("貓名")`，兩次「No value found」之後就宣稱「你之前沒有告訴我」，無視同樣被注入的日記。給小模型記憶工具反而讓召回變差：工具的否定結果壓過了上下文。這是 `public-line` 形態（無記憶工具、靠日記）的直接論據。
 23. 嵌入模型由自動偵測決定：依 `OPENAI → GROQ → MISTRAL → TOGETHER → FIREWORKS → COHERE` 的順序看環境變數，第一把有的就用；都沒有才試本機的 ollama／vllm／lmstudio；再沒有就靜靜退回文字模式。每句兩次（作答前召回、作答後寫日記），Mistral 每次約 0.5 秒，**內容會出境**，log 只有一行警告。
 24. 在文字模式下寫入的日記沒有向量，之後切成嵌入模式也搜不到；要驗記憶請用新 agent。
 25. 公網前台記憶的乾淨解是本機嵌入（Ollama on T4，延伸題 #3）；測試期用 Mistral 嵌入即可。
-26. **kernel 每一句組 prompt 時，都會從共用 kv_store 讀 `user_name` 塞進 `## User Profile`**（「The user's name is "…"，適時稱呼」）；沒有時改塞「你還不知道使用者名字，第一句先自我介紹並問稱呼，問到就用 `memory_store` 存 key `user_name`」。這是第三條跨 agent 路徑，**不需要任何工具**，0.6.9 沒有開關（只有 subagent 跳過）。實證：`blind`（只有 `system_time`、從沒被告知、空白 session）第一句就答「小王」。它同時解釋了三個先前的觀察：模型都用 `user_name` 這個 key（框架指示的）、沒 key 時答「我還不認識你／請問怎麼稱呼」（框架指示的）、以及前幾版「新 session 答出小王」不能當記憶層的證據。
+26. **kernel 每一句組 prompt 時，都會從共用 kv_store 讀 `user_name` 塞進 `## User Profile`**（「The user's name is "…"，適時稱呼」）；沒有時改塞「你還不知道使用者名字，第一句先自我介紹並問稱呼，問到就用 `memory_store` 存 key `user_name`」。這是第三條跨 agent 路徑，**不需要任何工具**，0.6.9 沒有開關（只有 subagent 跳過）。兩個分支都已實證：kv 有 `user_name` 時，`blind`（只有 `system_time`、從沒被告知、空白 session）第一句就答「小王」；kv 沒有時（v2.6，mini-line 聲稱「已記下」卻沒呼叫工具），`blind` 改答「請問你想讓我怎麼稱呼你呢？」——逐字照框架指示。它同時解釋了三個先前的觀察：模型都用 `user_name` 這個 key（框架指示的）、沒 key 時答「我還不認識你／請問怎麼稱呼」（框架指示的）、以及前幾版「新 session 答出小王」不能當記憶層的證據。
 27. 公網前台的緩解：不讓任何 agent 擁有 `memory_store`（kv 永遠沒有 `user_name`，代價是每段新對話第一句會被框架指示去問稱呼），或由管理用 agent 把 `user_name` 存成中性字串（如「訪客」）；驗記憶層一律用人名以外、kv 裡不存在的事實。
 28. （原始碼確認，未觸發）**canonical session 是每個 agent 一份，不是每個使用者一份**（`canonical_sessions` 以 `agent_id` 為主鍵）。每句作答後訊息都會追加進去；累積超過 100 則就把舊訊息「截斷後串接」成 `compacted_summary`（不是 LLM 摘要），之後每句以「[Previous conversation context]」注入 prompt（上限 500 字）。對只有一個使用者的個人助理這是跨頻道記憶；對公網前台，這是把所有使用者的對話濃縮後給下一個使用者看的第四條路，門檻是同一隻 agent 累計 100 則訊息。本次測試每隻 agent 都不到 100 則，所以沒有觸發，也沒有污染新 session 的測試。
+29. **隔離的單位是 agent，不是使用者。** API 的 `sender_id`／`sender_name` 只會在 prompt 加一行「Message from: …」，不會分 session、不會分記憶；session 切換（`POST …/sessions`）是 agent 級的全域指標，沒有 per-request 的 session 參數，兩個人同時講話會互相覆蓋。OpenFang 原生的多人模型是 channel router：以 `(channel, platform_user_id)` 的 bindings／user_defaults 把每個使用者路由到**不同的 agent**，再配 `dm_policy = allowed_only` 與 allowlist。多人服務的架構選項見 7.6。
 
 ### 5.5 安全
 
-29. （v2 修正 v1 規則 14）工具白名單的保障有兩層：注入層只把明列的 schema 給模型；執行層再查一次 capability。Gemma 4 曾無視只有 2 個工具的清單、憑空發出 `shell_exec` 的呼叫，被 kernel 擋下（`Permission denied: agent does not have capability`）並注入「不得編造失敗工具結果」的指示，沒有產生核准請求。Mistral Small 則是文字婉拒，不會幻覺工具。
-30. 以下維持 v1 結論：核准閘門有效；`auto_approve` 與 `--yolo` 不要開；Hands 不用就 pause；cloudflared 看完就關。
+30. （v2 修正 v1 規則 14）工具白名單的保障有兩層：注入層只把明列的 schema 給模型；執行層再查一次 capability。Gemma 4 曾無視只有 2 個工具的清單、憑空發出 `shell_exec` 的呼叫，被 kernel 擋下（`Permission denied: agent does not have capability`）並注入「不得編造失敗工具結果」的指示，沒有產生核准請求。Mistral Small 則是文字婉拒，不會幻覺工具。
+31. 以下維持 v1 結論：核准閘門有效；`auto_approve` 與 `--yolo` 不要開；Hands 不用就 pause；cloudflared 看完就關。
 
 ### 5.6 審計數據怎麼讀
 
-31. `usage_events.model` 記的是 agent 的**設定值**，不是實際服務的模型：故障演練那句帳本寫 `does-not-exist-drill`，實際由備援作答。誰真的服務要看 log 的 `Fallback driver failed, trying next` 或 `Driver rate-limited/overloaded, trying next fallback`。
-32. 跟隨 default_model 的 agent（內建 `assistant`）快照層不可信：故障演練的壞設定啟動會把壞名字寫進 DB 快照，還原後不會回寫。以宣告層 `GET /api/agents/{id}` 為準。
-33. log 含 ANSI 色碼與 NUL，要先剝除。`Tools selected` 是注入層真相；`Permission denied` 是執行層真相；`Embedding driver auto-detected` 那一行決定目前的記憶模式。
+32. `usage_events.model` 記的是 agent 的**設定值**，不是實際服務的模型：故障演練那句帳本寫 `does-not-exist-drill`，實際由備援作答。誰真的服務要看 log 的 `Fallback driver failed, trying next` 或 `Driver rate-limited/overloaded, trying next fallback`。
+33. 跟隨 default_model 的 agent（內建 `assistant`）快照層不可信：故障演練的壞設定啟動會把壞名字寫進 DB 快照，還原後不會回寫。以宣告層 `GET /api/agents/{id}` 為準。
+34. log 含 ANSI 色碼與 NUL，要先剝除。`Tools selected` 是注入層真相；`Permission denied` 是執行層真相；`Embedding driver auto-detected` 那一行決定目前的記憶模式。
 
 ### 5.7 外部工具：網頁搜尋與 MCP（依原始碼，Cell 10 尚未實測）
 
-34. 內建 `web_search` 的 `search_provider` 只認 `auto`／`brave`／`tavily`／`perplexity`／`searxng`／`duck_duck_go`；`auto` 依現有金鑰依序試 Tavily → Brave → Perplexity → SearXNG → DuckDuckGo。要 AI-native 搜尋，零改動的選項是 Tavily（設 `TAVILY_API_KEY`）；Exa 不在內建清單。
-35. OpenFang 是 MCP client，`[[mcp_servers]]` 支援 `stdio`（起子程序）與 `sse`（連 URL）兩種 transport。Exa 有兩種接法：**託管端點 `https://mcp.exa.ai/mcp` 匿名即可用、不需要 `EXA_API_KEY`**（有速率限制；帶 key 或 OAuth 可放寬），但它是 streamable-http，OpenFang 沒有這種 transport，要用 `npx -y mcp-remote <url>` 橋成 stdio；**本機 `npx -y exa-mcp-server` 則必須有 `EXA_API_KEY`**（原始碼在沒 key 時送空字串，每次呼叫 401）。兩者預設工具都是 `web_search_exa`、`web_fetch_exa`；本機模式限制工具要靠環境變數 `TOOLS`，CLI 的 `--tools=` 在 3.4.x 已不解析。MCP 工具名為 `mcp_<server>_<tool>`（例如 `mcp_exa_web_search_exa`），和內建工具走同一套白名單：**manifest 沒明列工具的 agent（含內建 assistant）會自動拿到全部 MCP 工具**，接 Exa 前先確認誰是不受限的。manifest 另有 `mcp_servers = [...]` 可限制某隻 agent 只看得到哪些 MCP server。stdio 子程序的環境變數會被清空，只有 `env = [...]` 列出的會傳入。
-36. 沒有 Computer Use。47 個內建工具裡沒有螢幕座標式的 `screenshot`／`left_click`／`mouse_move`／`key`；只有 10 個 `browser_*` 工具，走 Chrome DevTools Protocol 且以 CSS selector 操作（`browser_click(selector)` 用 `querySelector` 加 `el.click()`），`browser_screenshot` 只存 PNG 給 Dashboard 看，模型不會自動看到，要另外呼叫 `image_analyze`。
+35. 內建 `web_search` 的 `search_provider` 只認 `auto`／`brave`／`tavily`／`perplexity`／`searxng`／`duck_duck_go`；`auto` 依現有金鑰依序試 Tavily → Brave → Perplexity → SearXNG → DuckDuckGo。要 AI-native 搜尋，零改動的選項是 Tavily（設 `TAVILY_API_KEY`）；Exa 不在內建清單。
+36. OpenFang 是 MCP client，`[[mcp_servers]]` 支援 `stdio`（起子程序）與 `sse`（連 URL）兩種 transport。Exa 有兩種接法：**託管端點 `https://mcp.exa.ai/mcp` 匿名即可用、不需要 `EXA_API_KEY`**（有速率限制；帶 key 或 OAuth 可放寬），但它是 streamable-http，OpenFang 沒有這種 transport，要用 `npx -y mcp-remote <url>` 橋成 stdio；**本機 `npx -y exa-mcp-server` 則必須有 `EXA_API_KEY`**（原始碼在沒 key 時送空字串，每次呼叫 401）。兩者預設工具都是 `web_search_exa`、`web_fetch_exa`；本機模式限制工具要靠環境變數 `TOOLS`，CLI 的 `--tools=` 在 3.4.x 已不解析。MCP 工具名為 `mcp_<server>_<tool>`（例如 `mcp_exa_web_search_exa`），和內建工具走同一套白名單：**manifest 沒明列工具的 agent（含內建 assistant）會自動拿到全部 MCP 工具**，接 Exa 前先確認誰是不受限的。manifest 另有 `mcp_servers = [...]` 可限制某隻 agent 只看得到哪些 MCP server。stdio 子程序的環境變數會被清空，只有 `env = [...]` 列出的會傳入。
+37. 沒有 Computer Use。47 個內建工具裡沒有螢幕座標式的 `screenshot`／`left_click`／`mouse_move`／`key`；只有 10 個 `browser_*` 工具，走 Chrome DevTools Protocol 且以 CSS selector 操作（`browser_click(selector)` 用 `querySelector` 加 `el.click()`），`browser_screenshot` 只存 PNG 給 Dashboard 看，模型不會自動看到，要另外呼叫 `image_analyze`。
 
 ## 6. 現行設定（config.toml 與 manifest）
 
@@ -233,12 +234,26 @@ OpenFang 的「記憶」是四個存放處加一組提示檔，各自的寫入�
 
 一句話：**有隔離的只有 session 和 episodic 日記；KV、任務板、`user_name` 推送是全域的；canonical 是「每隻 agent、所有使用者」。** 文件裡的「per-agent」指的是底層表結構，不是模型工具實際碰到的東西。
 
+### 7.6 要服務多個人怎麼辦
+
+先把邊界說清楚：**有隔離的東西都以 agent 為單位**（session、日記、canonical、workspace 檔）；**全域的東西**（KV、`user_name` 推送、任務板、MCP 工具與其額度）不會因為換人而變。`sender_id` 只是 prompt 裡的一行字。所以「多人」在 OpenFang 裡等於「多 agent」，沒有第二條路。
+
+| 方案 | 做法 | 隔離效果 | 代價 |
+|---|---|---|---|
+| **A. 一人一 agent**（OpenFang 原生方向） | 每個平台使用者路由到自己的 agent：封閉名單用 config 的 bindings／`[[users]]` 靜態綁定；開放公眾要在 webhook 前加一層自寫 bridge，第一次來的人先 `POST /api/agents` 用模板 spawn（名字如 `line-<hash>`），再轉送訊息 | session、日記、canonical 自然按人分開；日記有 `agent_id` 過濾，嵌入開著就有每人自己的記憶 | 全域項目仍要處理：整個部署不給任何 agent `memory_store`（否則 KV 與 `user_name` 廣播）、前台 manifest 用 `public-line` 形態、不給 `task_*`；agent 數量隨使用者成長，開機會 restore 全部，閒置要用 `DELETE /api/agents/{id}` 回收 |
+| B. 一個 agent、每人一個 session | 用 `sessions/by-label/{user}` 切換 | **不可行**：切換是全域的，併發會串線；日記按 agent 混在一起，A 說的話會被 B 的問題召回；canonical 把所有人濃縮給每個人 | — |
+| C. 一人一個 OpenFang instance | Docker 每人一份 | 最乾淨，連 KV 與 `user_name` 都分開 | 最重；只適合少數 VIP 或企業客戶 |
+
+建議：A，並把「全部署零 `memory_store`」當硬規則寫進部署檢查表。要記得使用者名字，靠他自己的日記（說過就召回得到），不靠 `user_name`。
+
+LINE 這條路的現況（修正 v1 的「`[line]` 未文件化」）：0.6.9 有原生 `[channels.line]`（`channel_secret_env`、`access_token_env`、`webhook_port`＝8450、`default_agent`、`overrides` 含 `dm_policy`），webhook 會驗 `X-Line-Signature`。原生 adapter 只能靠靜態 bindings 分人，不會自動 spawn；程式註解說出站走 push API（LINE 免費方案 push 有月配額，reply 免費），實際用哪個要實測。所以「開放公眾」仍要自寫 bridge，v1 的設計仍成立，只是簽章驗證與 reply 可以參考原生實作。
+
 ## 8. 審計方法（五層加帳本，全部零額度）
 
 | 層 | 來源 | 回答的問題 | 注意 |
 |---|---|---|---|
 | 宣告層 | `GET /api/agents/{id}` 的 `capabilities`、`model_*` | 現在有什麼權限、現在跟哪顆模型 | 跟隨 default 的 agent 以此為準 |
-| 快照層 | SQLite `agents.manifest`（msgpack） | spawn 當下的設定（含 `max_tokens`） | assistant 的快照不可信（規則 32） |
+| 快照層 | SQLite `agents.manifest`（msgpack） | spawn 當下的設定（含 `max_tokens`） | assistant 的快照不可信（規則 33） |
 | 注入層 | log 的 `Tools selected … tool_names=[…]`（含輪替檔，先剝 ANSI） | 每次請求實際塞給 LLM 的工具 | `tools=[]` 在這裡會顯示為 65 個工具 |
 | 切換層 | log 的 `Fallback provider configured`、`trying next fallback`、`Fallback driver failed`、`Rate limited, retrying`、`Permission denied` | 誰真的服務、何時切換、工具幻覺有沒有被擋 | 帳本答不了這一題 |
 | 共用記憶層 | SQLite `kv_store`（`agent_id` 末四碼 `0001` 就是共用） | `memory_store` 存了什麼、誰都讀得到 | manifest 管不到 |
@@ -261,12 +276,13 @@ OpenFang 的「記憶」是四個存放處加一組提示檔，各自的寫入�
 | 一句話幾十秒到幾分鐘，但 `切換=0` | NIM 延遲變異，不是額度也不是嵌入；改 `PRIMARY="mistral"` |
 | 新 session 問名字答「我還不認識你／請問怎麼稱呼」 | 這是框架在 kv 沒有 `user_name` 時塞進 prompt 的指示（規則 26），不代表記憶層壞了；驗記憶請問貓名。貓名也答不出才看嵌入（規則 22、24） |
 | 從沒被告知的 agent 叫出使用者名字 | kv 的 `user_name` 被注入所有 agent（規則 26）；查 `kv_store` 是誰存的 |
+| 有記憶工具的 agent 說「你沒告訴過我」，無工具的 agent 卻答得出 | 模型信工具的「No value found」勝過注入的日記（規則 22）；這是模型行為，不是召回失效；前台改用無工具形態 |
 | 記憶工具回「No value found」 | 模型根本沒有 store（Mistral Small 常忽略「務必」）；查 `kv_store` 確認 |
 | 同一段對話問名字卻答「好的，已記住」 | 小模型把工具回傳的結果當成要回覆的內容，忘了原本的問題；再問一次即可，不是記憶故障 |
 | 429 PerDay、limit: 20 | Gemini 該桶今天用完；鏈會自動跳到下一桶，只多 12 秒重試 |
 | `Permission denied: agent does not have capability` | 模型幻覺出工具名，被執行層擋下，屬正常；不會產生核准請求 |
 | reasoning_content 400 | 推理型模型；Cell 3 已排除，換非推理型 |
-| 快照層的 assistant 模型名怪異 | 跟隨 default_model 時殘留的舊值；以宣告層為準（規則 32） |
+| 快照層的 assistant 模型名怪異 | 跟隨 default_model 時殘留的舊值；以宣告層為準（規則 33） |
 | log 出現 `Embedding driver configured to send data to external API` | 提醒內容會出境；測試期可接受，前台改用本機嵌入 |
 
 ## 10. 模型行為與 token 成本對照（實測）
@@ -277,10 +293,10 @@ OpenFang 的「記憶」是四個存放處加一組提示檔，各自的寫入�
 |---|---|---|---|---|
 | Gemini 3.6／3.5-flash（v1） | 文字婉拒 | 會 | 正常 | 數秒 |
 | Gemma 4 31B（NIM） | **幻覺出 `shell_exec`**，被 kernel 擋下 | 會 | 正常 | 2 秒到 3 分鐘 |
-| Mistral Small | 文字婉拒，最守規矩 | **時有時無** | 偶爾回覆工具結果而非使用者問題 | 1–3 秒 |
+| Mistral Small | v2.2 文字婉拒；v2.6 **幻覺 `shell_exec`** 被擋後還補一句「路徑確認無誤」 | **時有時無**；v2.6 聲稱「已幫你記下」但沒呼叫工具 | 偶爾回覆工具結果而非使用者問題；有記憶工具時信「No value found」勝過注入的日記 | 1–3 秒 |
 | Mistral Medium | — | 幾乎不碰工具 | — | 1 秒 |
 
-挑前台模型不能只看額度與延遲，工具紀律要另外測。
+挑前台模型不能只看額度與延遲，工具紀律要另外測；同一顆模型跨次跑也不穩定，結論要以「路徑是否被擋住」為準，不以模型那一次的態度為準。
 
 ### 10.2 token 成本：精簡 agent 對全能型 assistant
 
@@ -291,14 +307,16 @@ OpenFang 的「記憶」是四個存放處加一組提示檔，各自的寫入�
 | **assistant**（內建全能型） | 65 | 10,249（Gemma）／11,072、11,100（Mistral Small） | 21k–24k（v1，Gemini） | 三家一致 |
 | **mini-line**（2 個記憶工具） | 2 | 3,362／3,636／3,796／3,954／4,019（後兩個含召回的記憶） | 7,185／7,231／7,286／7,334／7,376／7,457／7,496／7,723 | Gemma、Mistral 一致 |
 | drill、stranger（同 mini-line manifest） | 2 | 3,380／3,388／3,548 | 7,337 | Mistral、Gemini lite |
-| **public-line**（只有 `system_time`） | 1 | 3,487／3,488／3,563 | — | Mistral |
+| **public-line**（只有 `system_time`） | 1 | 3,487／3,488／3,506／3,617／3,688 | — | Mistral |
+| **search-lite**（`system_time`＋Exa MCP） | 2 | — | 10,594（Exa 回傳約 6KB 文字，約 4.5–5k tokens 進了第二次呼叫） | Mistral |
 
 怎麼讀：
 
 - **地板約 3.3–3.5k**：public-line 只有一個極小的工具 schema，仍要 3.5k，這是框架固定開銷（框架 system prompt、workspace 檔、manifest system prompt、session 骨架），和 v1 估的 3.3k 一致。
 - **65 個工具 schema 約 7–7.5k**：assistant 的 11k 減掉地板就是它。這不因供應商而變，只因工具數而變。
 - **精簡 agent 是全能型的三分之一**：單次 3.5k 對 11k、含工具輪 7.5k 對 22k，比例都約 1：3。
-- **召回的記憶約加 300–600**：mini-line 在新 session 問名字時 3,954／4,019，比空白起點 3,4xx 多出來的就是注入的日記。
+- **召回的記憶約加 100–600**：public-line 空白 session 問貓名 3,617 對首句 3,506（＋111）；mini-line 問名字時 3,954／4,019 對 3,4xx。多出來的就是注入的日記，條數與長度決定差多少。
+- **一次 Exa 搜尋約 5k tokens**：搜尋結果整包塞回第二次呼叫；`numResults` 開小一點可省。
 - **省的是 token，不是請求數**：一句有工具輪就是 2 次請求，不管工具數；對 Gemini 這種按請求數計的免費層，瘦身不省額度（規則 9、11）。
 - session 歷史會逐句累積在單次呼叫裡，長對話要靠 compaction；上表都是短對話。
 
@@ -307,11 +325,11 @@ OpenFang 的「記憶」是四個存放處加一組提示檔，各自的寫入�
 | 題目 | 現況 | 需要什麼 |
 |---|---|---|
 | **本機嵌入（Ollama on T4）** | 從「純分析」升級成**有明確需求**：公網前台記憶不出境的唯一乾淨解；順便可跑本地 LLM | GPU runtime；`[memory] embedding_provider="ollama"` 並 `ollama pull` 一個嵌入模型；Ollama context 拉到 32k |
-| LINE 串接 | 橋的設計未變。新增約束：reply token 需在約一分鐘內使用，所以主力必須是延遲穩定的 Mistral，NIM 不能當主力；前台 manifest 用 `public-line` 形態 | LINE secret／token；cloudflared 通橋（port 8000） |
+| LINE 串接 | 0.6.9 已有原生 `[channels.line]`（見 7.6），但只能靜態分人；開放公眾要自寫 bridge 做「一人一 agent」的自動 spawn。約束不變：reply token 約一分鐘內要用，主力必須是延遲穩定的 Mistral；前台 manifest 用 `public-line` 形態；全部署不給 `memory_store` | LINE secret／token；cloudflared 通橋（原生 8450 或自寫 8000）；待驗：原生 adapter 出站是 push 還是 reply |
 | Groq 重新啟用 | `max_tokens=512` 已能寫入，帳面 TPM 應不會再超過 6k | 1 次 spawn 加 1 句，需 Groq 金鑰 |
 | Gemma 4 on AI Studio 是否接受 tools | 三桶都回 200，但 Gemma 桶只驗過純文字 | 暫時放主力講一句 |
-| Exa 搜尋（search-lite） | Cell 10 已寫好但未跑；預期注入層出現 `mcp_exa_` 工具名 | 託管模式不需要 key；Colab 有 `npx`；第一次 `npx` 下載約 30–60 秒 |
-| Computer Use | **OpenFang 自己沒有**（規則 36）。不建議用 `shell_exec` 拼 xdotool：Colab 沒顯示器、每步過核准閘門、截圖→視覺模型→座標的迴圈免費層養不起。可行路線是把外部 computer-use 方案當 MCP 工具掛進 `[[mcp_servers]]`，OpenFang 只做調度與記憶，詳見 11.1 | 見 11.1；至少 GPU 或付費層 |
+| ~~Exa 搜尋（search-lite）~~ | **結案（v2.6）**：hosted 模式免 key，`mcp-remote` 橋接 90 秒內連上，工具 `mcp_exa_web_search_exa`／`mcp_exa_web_fetch_exa`，一句 4 秒、約 10.6k tokens | — |
+| Computer Use | **OpenFang 自己沒有**（規則 37）。不建議用 `shell_exec` 拼 xdotool：Colab 沒顯示器、每步過核准閘門、截圖→視覺模型→座標的迴圈免費層養不起。可行路線是把外部 computer-use 方案當 MCP 工具掛進 `[[mcp_servers]]`，OpenFang 只做調度與記憶，詳見 11.1 | 見 11.1；至少 GPU 或付費層 |
 | `skills_mode="all"` 語意 | 未動 | 查原始碼 |
 | Hands 研究任務 | 未動；每輪 4–23 萬 tokens | 付費層或本地模型 |
 | 正式部署 | Colab 不能常駐；另外 driver 沒有 timeout，生產環境要靠外層 proxy 補 | VPS／Docker 加 API 認證 |
@@ -336,8 +354,8 @@ OpenFang 的「記憶」是四個存放處加一組提示檔，各自的寫入�
 
 ## 12. 評估摘要
 
-**加分**：fallback 鏈對任何錯誤都會切、agent 無感，多桶策略實測有效；核准閘門與能力閘門兩層都攔得住，包括模型幻覺出的工具名；SQLite 的記憶、session、kv 跨重啟持久；五層審計零額度；`provider="default"` 讓 manifest 跟著 config 走；OpenAI 相容 driver 在 NVIDIA、Mistral 上工具輪正常。
+**加分**：fallback 鏈對任何錯誤都會切、agent 無感，多桶策略實測有效；episodic 日記在嵌入開著時跨 session 召回成立（貓名實證）；MCP 接 Exa 一次成功；核准閘門與能力閘門兩層都攔得住，包括模型幻覺出的工具名；SQLite 的記憶、session、kv 跨重啟持久；五層審計零額度；`provider="default"` 讓 manifest 跟著 config 走；OpenAI 相容 driver 在 NVIDIA、Mistral 上工具輪正常。
 
-**扣分**：`memory_store`／`memory_recall` 是全 agent 共用命名空間且沒有開關，與 `self.*` 的預期相反；kernel 把共用 `user_name` 推送給所有 agent 且無法關閉，預設 prompt 還會主動要 agent 去問名字並存進共用區；canonical session 以 agent 為單位累積所有使用者的對話並在 100 則後摘要注入；沒有嵌入時記憶層實質關閉且不警告；嵌入自動偵測到外部金鑰就把內容外送，只有 log 警告沒有確認；driver 與嵌入沒有 HTTP timeout，慢不會切換；`tools=[]` 等於全開；帳本的 `model` 欄語義誤導；跟隨 default 的 agent 快照會殘留壞值；文件與實作落差仍在。
+**扣分**：`memory_store`／`memory_recall` 是全 agent 共用命名空間且沒有開關，與 `self.*` 的預期相反；kernel 把共用 `user_name` 推送給所有 agent 且無法關閉，預設 prompt 還會主動要 agent 去問名字並存進共用區；canonical session 以 agent 為單位累積所有使用者的對話並在 100 則後摘要注入；沒有嵌入時記憶層實質關閉且不警告；嵌入自動偵測到外部金鑰就把內容外送，只有 log 警告沒有確認；driver 與嵌入沒有 HTTP timeout，慢不會切換；小模型拿到記憶工具後會用工具的否定結果壓過注入的日記，還會聲稱已儲存卻沒呼叫工具；`tools=[]` 等於全開；帳本的 `model` 欄語義誤導；跟隨 default 的 agent 快照會殘留壞值；文件與實作落差仍在。
 
-**適用判斷**：維持 v1——要「常駐、自主排程、多 agent」的場景值得上 VPS 再評；只要聊天機器人則過重；需要 Computer Use 的場景不適用（規則 36）。新增一條：**要接公網，記憶子系統必須自己設計圍欄**——整個部署不給 `memory_store`（否則 `user_name` 會廣播）、前台不給記憶工具、用本機嵌入、日記靠 agent_id 隔離。
+**適用判斷**：維持 v1——要「常駐、自主排程、多 agent」的場景值得上 VPS 再評；只要聊天機器人則過重；需要 Computer Use 的場景不適用（規則 37）。新增一條：**要接公網，記憶子系統必須自己設計圍欄**——整個部署不給 `memory_store`（否則 `user_name` 會廣播）、前台不給記憶工具、用本機嵌入、日記靠 agent_id 隔離。
